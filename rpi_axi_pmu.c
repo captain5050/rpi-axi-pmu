@@ -3124,18 +3124,21 @@ static const struct attribute_group *rpi_axi_pmu_bcm2712d0_attr_groups[] = {
  * @pmu: Pointer to core PMU struct
  * @fake_hw_events: Temporary array of watcher structures for pre-flight check
  * @event: Pointer to perf_event being validated
+ * @num_events: Running count of PMU events in the group
  *
  * Return: true if event can be scheduled, false otherwise.
  */
 static bool rpi_axi_pmu__validate_event(struct pmu *pmu,
 					struct rpi_axi_hw_events fake_hw_events[MON_MAX],
-					struct perf_event *event)
+					struct perf_event *event, int *num_events)
 {
 	enum monitor mon;
 
 	if (is_software_event(event))
 		return true;
 	if (event->pmu != pmu)
+		return false;
+	if (++(*num_events) > RPI_AXI_MAX_EVENTS)
 		return false;
 	mon = config_to_monitor(event->attr.config);
 	return rpi_axi_hw_events__get_alloc_event_idx(&fake_hw_events[mon], event) >= 0;
@@ -3154,16 +3157,20 @@ static bool rpi_axi_pmu__validate_group(struct perf_event *event)
 {
 	struct perf_event *sibling, *leader = event->group_leader;
 	struct rpi_axi_hw_events fake_hw_events[MON_MAX];
+	int num_events = 0;
+
+	if (leader == event)
+		return true;
 
 	rpi_axi_hw_events__init(&fake_hw_events[MON_SYSTEM]);
 	rpi_axi_hw_events__init(&fake_hw_events[MON_VPU]);
-	if (!rpi_axi_pmu__validate_event(event->pmu, fake_hw_events, leader))
+	if (!rpi_axi_pmu__validate_event(event->pmu, fake_hw_events, leader, &num_events))
 		return false;
 	for_each_sibling_event(sibling, leader) {
-		if (!rpi_axi_pmu__validate_event(event->pmu, fake_hw_events, sibling))
+		if (!rpi_axi_pmu__validate_event(event->pmu, fake_hw_events, sibling, &num_events))
 			return false;
 	}
-	return rpi_axi_pmu__validate_event(event->pmu, fake_hw_events, event);
+	return rpi_axi_pmu__validate_event(event->pmu, fake_hw_events, event, &num_events);
 }
 
 /**
